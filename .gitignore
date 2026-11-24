@@ -221,3 +221,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# PyCharm settings
+.idea/
+
+# Local environment and API keys
+.venv/
+.env
+.streamlit/secrets.toml
