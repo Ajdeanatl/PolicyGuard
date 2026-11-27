@@ -3,7 +3,7 @@ import os
 from openai import OpenAI, OpenAIError
 import streamlit as st
 
-from audit import CASES, POLICY, load_reviews, run_audit, save_results, summarize
+from audit import CASES, POLICY, chatbot_cost, load_reviews, run_audit, save_results, summarize
 
 st.set_page_config(page_title="PolicyGuard")
 st.title("PolicyGuard")
@@ -13,7 +13,7 @@ with st.expander("Northern Airlines policy"):
     st.text(POLICY)
 
 api_key = os.getenv("OPENAI_API_KEY")
-model = os.getenv("OPENAI_MODEL")
+model = os.getenv("OPENAI_MODEL", "").strip()
 live = st.checkbox("Use live model", disabled=not (api_key and model))
 if not (api_key and model):
     st.caption("Set OPENAI_API_KEY and OPENAI_MODEL on the server to enable live runs.")
@@ -23,11 +23,11 @@ selected = st.multiselect(
 trials = st.slider("Trials per case per bot", 1, 3, 2)
 
 if st.button("Run Audit", disabled=not selected):
-    generate = None
+    generate = generate_reply = None
     if live:
         client = OpenAI(api_key=api_key, timeout=20, max_retries=0)
 
-        def generate(instructions, message):
+        def request(instructions, message):
             try:
                 response = client.responses.create(
                     model=model, instructions=instructions, input=message,
@@ -40,12 +40,22 @@ if st.button("Run Audit", disabled=not selected):
                 raise RuntimeError(f"Model response incomplete ({details.reason if details else 'unknown'}).")
             if not response.output_text.strip():
                 raise RuntimeError("Model returned no text.")
-            return response.output_text
+            return response
+
+        def generate(instructions, message):
+            return request(instructions, message).output_text
+
+        def generate_reply(instructions, conversation):
+            response = request(instructions, conversation)
+            reply_model = response.model or model
+            cost, note = chatbot_cost(reply_model, response.usage)
+            return response.output_text, reply_model, cost, note
 
     progress = st.progress(0)
     total = len(selected) * trials * 2
     st.session_state["audit_rows"] = run_audit(
-        selected, trials, generate, lambda completed: progress.progress(completed / total)
+        selected, trials, generate, lambda completed: progress.progress(completed / total),
+        generate_reply=generate_reply,
     )
     st.session_state["audit_live"] = live
     if live:
@@ -85,5 +95,10 @@ if rows:
                 st.text(row["policy_evidence"])
             if row.get("reason"):
                 st.text(row["reason"])
+            if st.session_state["audit_live"]:
+                cost = row["api_cost"]
+                st.caption(f'Chatbot model: {row["chatbot_model"] or "unavailable"} · '
+                           + (f'Estimated chatbot cost: ${cost:.8f}' if cost is not None
+                              else row["cost_status"]))
             if row["error"]:
                 st.error(row["error"])
