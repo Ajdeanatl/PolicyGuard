@@ -3,7 +3,7 @@ import os
 from openai import OpenAI, OpenAIError
 import streamlit as st
 
-from audit import CASES, POLICY, run_audit, summarize
+from audit import CASES, POLICY, load_reviews, run_audit, save_results, summarize
 
 st.set_page_config(page_title="PolicyGuard")
 st.title("PolicyGuard")
@@ -35,6 +35,9 @@ if st.button("Run Audit", disabled=not selected):
                 )
             except OpenAIError as error:
                 raise RuntimeError(f"Model request failed ({type(error).__name__}).") from error
+            if response.status == "incomplete":
+                details = response.incomplete_details
+                raise RuntimeError(f"Model response incomplete ({details.reason if details else 'unknown'}).")
             if not response.output_text.strip():
                 raise RuntimeError("Model returned no text.")
             return response.output_text
@@ -45,33 +48,39 @@ if st.button("Run Audit", disabled=not selected):
         selected, trials, generate, lambda completed: progress.progress(completed / total)
     )
     st.session_state["audit_live"] = live
+    if live:
+        try:
+            save_results(st.session_state["audit_rows"])
+        except OSError:
+            st.warning("Could not save results to data/results.json. Review can still open this session's run.")
 
 rows = st.session_state.get("audit_rows", [])
 if rows:
+    reviews = load_reviews() if st.session_state["audit_live"] else st.session_state.get("sample_reviews", {})
     if not st.session_state["audit_live"]:
         st.info("Scripted examples. These results illustrate the workflow and contain no model measurements.")
-    for bot, column in zip(("baseline", "improved"), st.columns(2)):
-        numbers = summarize(rows, bot)
+    for bot, column in zip(("basic", "improved"), st.columns(2)):
+        numbers = summarize(rows, bot, reviews)
         column.metric(bot.title(), f'{numbers["Failures"]}/{numbers["Graded"]} failures')
         column.caption(f'{numbers["Errors"]} errors · {numbers["Reviewed"]} reviewed')
     st.subheader("Failures by case")
     case_scores = []
-    for case_id in dict.fromkeys(row["case_id"] for row in rows):
-        case_rows = [row for row in rows if row["case_id"] == case_id]
+    for case_id in dict.fromkeys(row["scenario_id"] for row in rows):
+        case_rows = [row for row in rows if row["scenario_id"] == case_id]
         score = {"Case": case_id}
-        for bot in ("baseline", "improved"):
-            numbers = summarize(case_rows, bot)
+        for bot in ("basic", "improved"):
+            numbers = summarize(case_rows, bot, reviews)
             score[bot.title()] = f'{numbers["Failures"]}/{numbers["Graded"]}'
         case_scores.append(score)
     st.table(case_scores)
     st.subheader("Attempt details")
     for row in rows:
-        status = row["ai_verdict"] or "error"
-        label = f'{row["case_id"]} · {row["bot"]} · Trial {row["trial"]} · {status}'
+        status = row["verdict"] or "error"
+        label = f'{row["scenario_id"]} · {row["bot_version"]} · Trial {row["run_number"]} · {status}'
         with st.expander(label):
-            st.text(row["customer_message"])
-            if row["reply"]:
-                st.text(row["reply"])
+            for message in row["conversation"]:
+                with st.chat_message(message["role"]):
+                    st.text(message["content"])
             if row["policy_evidence"]:
                 st.text(row["policy_evidence"])
             if row.get("reason"):

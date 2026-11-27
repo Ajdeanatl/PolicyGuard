@@ -28,6 +28,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from audit import load_reviews, result_id
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 RESULTS_FILE = DATA_DIR / "results.json"          # real results from the test engine
 SAMPLE_FILE = DATA_DIR / "sample_results.json"    # example results, used until real ones exist
@@ -79,33 +81,29 @@ NAME_GROUPS = ["White women", "White men", "Black women", "Black men"]
 
 def load_results():
     """Load real results if they exist, otherwise the sample results."""
+    rows = st.session_state.get("audit_rows")
+    if rows is not None:
+        return rows, "live test results" if st.session_state["audit_live"] else "scripted examples"
     if RESULTS_FILE.exists():
-        return json.loads(RESULTS_FILE.read_text()), "real test results"
-    return json.loads(SAMPLE_FILE.read_text()), "sample results (real ones aren't in yet)"
-
-
-def load_reviews():
-    if REVIEWS_FILE.exists():
-        return json.loads(REVIEWS_FILE.read_text())
-    return {}
+        return json.loads(RESULTS_FILE.read_text(encoding="utf-8")), "live test results"
+    if SAMPLE_FILE.exists():
+        return json.loads(SAMPLE_FILE.read_text(encoding="utf-8")), "scripted examples"
+    return [], "no audit results yet"
 
 
 def save_reviews(reviews):
-    REVIEWS_FILE.write_text(json.dumps(reviews, indent=2))
-
-
-def result_id(row):
-    """A unique ID for one test result, so each review is saved to the right row.
-    Used only behind the scenes, never shown on screen."""
-    return "|".join(
-        str(row.get(k, "")) for k in ("scenario_id", "bot_version", "run_number", "customer_name")
-    )
+    if source == "scripted examples":
+        st.session_state["sample_reviews"] = reviews
+    else:
+        REVIEWS_FILE.write_text(json.dumps(reviews, indent=2), encoding="utf-8")
 
 
 # ---------- Choosing what to review ----------
 
 def needs_review(row):
     """Return the reason a result needs human review, or None if it doesn't."""
+    if row.get("error"):
+        return "Audit execution error"
     if row.get("verdict") != "correct":
         return "Judge flagged a mistake"
     if row.get("confidence") == "low":
@@ -143,7 +141,10 @@ st.title("Review Screen")
 st.write("The AI judge can make mistakes too. Check each result below and confirm or correct the judge's verdict.")
 
 results, source = load_results()
-reviews = load_reviews()
+reviews = (st.session_state.get("sample_reviews", {}) if source == "scripted examples"
+           else load_reviews())
+if not results:
+    st.info("Run an audit from the app page to load results here.")
 
 queue = []
 for row in results:
@@ -185,7 +186,7 @@ def verdict_label(verdict):
 
 def show_card(row, reason):
     rid = result_id(row)
-    verdict = row.get("verdict", "")
+    verdict = row.get("verdict") or "error"
     name = row.get("customer_name", "")
     title = f"{verdict_label(verdict)} · {row.get('scenario_id')} · {row.get('bot_version')} bot"
 
@@ -223,6 +224,10 @@ def show_card(row, reason):
                 + label(f"Confidence: {confidence}", CONFIDENCE_COLORS.get(confidence, "gray"))
             )
             st.write(hide_name(row.get("reason", ""), name))
+            if row.get("error"):
+                st.error(row["error"])
+            if row.get("policy_evidence"):
+                st.text(row["policy_evidence"])
             if row.get("offending_text"):
                 st.markdown(f"Problem words: :red[“{hide_name(row['offending_text'], name)}”]")
             if row.get("check_passed") == "no":

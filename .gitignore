@@ -228,3 +228,6 @@ __marimo__/
 .venv/
 .env
 .streamlit/secrets.toml
+# Local audit output and human-review decisions
+/data/results.json
+/data/reviews.json
