@@ -13,7 +13,7 @@ with st.expander("Northern Airlines policy"):
     st.text(POLICY)
 
 api_key = os.getenv("OPENAI_API_KEY")
-model = os.getenv("OPENAI_MODEL")
+model = os.getenv("OPENAI_MODEL", "").strip()
 live = st.checkbox("Use live model", disabled=not (api_key and model))
 if not (api_key and model):
     st.caption("Set OPENAI_API_KEY and OPENAI_MODEL on the server to enable live runs.")
@@ -47,7 +47,9 @@ if st.button("Run Audit", disabled=not selected):
 
         def generate_reply(instructions, conversation):
             response = request(instructions, conversation)
-            return response.output_text, chatbot_cost(model, response.usage)
+            reply_model = response.model or model
+            cost, note = chatbot_cost(reply_model, response.usage)
+            return response.output_text, reply_model, cost, note
 
     progress = st.progress(0)
     total = len(selected) * trials * 2
@@ -93,5 +95,10 @@ if rows:
                 st.text(row["policy_evidence"])
             if row.get("reason"):
                 st.text(row["reason"])
+            if st.session_state["audit_live"]:
+                cost = row["api_cost"]
+                st.caption(f'Chatbot model: {row["chatbot_model"] or "unavailable"} · '
+                           + (f'Estimated chatbot cost: ${cost:.8f}' if cost is not None
+                              else row["cost_status"]))
             if row["error"]:
                 st.error(row["error"])

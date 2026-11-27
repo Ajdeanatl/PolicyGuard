@@ -152,13 +152,25 @@ def grade(generate, case, conversation):
                 check_passed="yes" if quote_ok and (evidence or citation == "none") else "no")
 
 
+CHATBOT_RATES = {
+    "gpt-5-mini": (0.25, 0.025, 2.00),
+    "gpt-5.4-mini": (0.75, 0.075, 4.50),
+}
+
+
 def chatbot_cost(model, usage):
-    """Estimate standard API charges in USD for one GPT-5 mini response."""
-    if model != "gpt-5-mini" or usage is None:
-        return None
+    """Estimate standard API charges in USD for one chatbot reply."""
+    family = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model.strip().lower())
+    rates = CHATBOT_RATES.get(family)
+    if rates is None:
+        return None, "No pricing configured for this model"
+    if usage is None:
+        return None, "API did not return token usage"
+    input_rate, cached_rate, output_rate = rates
     cached = getattr(usage.input_tokens_details, "cached_tokens", 0) or 0
-    return ((usage.input_tokens - cached) * 0.25 + cached * 0.025
-            + usage.output_tokens * 2.00) / 1_000_000
+    cost = ((usage.input_tokens - cached) * input_rate + cached * cached_rate
+            + usage.output_tokens * output_rate) / 1_000_000
+    return cost, "Estimated from token usage"
 
 
 def run_audit(cases, trials, generate=None, on_result=None, *, generate_reply=None):
@@ -175,9 +187,12 @@ def run_audit(cases, trials, generate=None, on_result=None, *, generate_reply=No
                            name_group="", should_hand_off="",
                            verdict=None, severity="", reason="", policy_rule="",
                            policy_evidence="", offending_text="", tone="", confidence="",
-                           check_passed="no", api_cost=None, human_decision="",
+                           check_passed="no", api_cost=None, cost_status="Scripted example" if generate is None
+                           else "Incomplete chatbot reply measurement", chatbot_model="", human_decision="",
                            corrected_verdict="", reviewer_note="")
                 reply_costs = []
+                cost_notes = []
+                reply_models = []
                 try:
                     fails = bot == "basic" and trial % 2 == 1
                     for message in (case.message, case.follow_up):
@@ -199,11 +214,16 @@ def run_audit(cases, trials, generate=None, on_result=None, *, generate_reply=No
                             if generate_reply is None:
                                 reply = generate(instructions, conversation)
                             else:
-                                reply, cost = generate_reply(instructions, conversation)
+                                reply, model, cost, note = generate_reply(instructions, conversation)
+                                reply_models.append(model)
                                 reply_costs.append(cost)
+                                cost_notes.append(note)
                         conversation.append(dict(role="assistant", content=reply))
-                    if len(reply_costs) == 2 and all(cost is not None for cost in reply_costs):
-                        row["api_cost"] = round(sum(reply_costs), 10)
+                    if len(reply_costs) == 2:
+                        row["chatbot_model"] = ", ".join(dict.fromkeys(reply_models))
+                        row["cost_status"] = "; ".join(dict.fromkeys(cost_notes))
+                        if all(cost is not None for cost in reply_costs):
+                            row["api_cost"] = round(sum(reply_costs), 10)
                     if generate is None:
                         verdict = "wrong_information" if fails else "correct"
                         row.update(verdict=verdict, severity=SEVERITY[verdict],
