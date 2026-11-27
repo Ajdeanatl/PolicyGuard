@@ -28,3 +28,8 @@ saved in `data/reviews.json`, and the scorecard uses corrections when available.
 For a public scripted demo, deploy `app.py` without API credentials. Open the
 app, run an audit, and open Review. For a local live check, select
 `basic-24-hour`, use one trial, and verify both four-message conversations.
+
+`api_cost` estimates USD for the two chatbot replies per bot and trial using
+reported token usage and GPT-5 mini standard rates, including cached input
+discounts and billed output tokens. Judge calls are excluded. Scripted rows,
+unsupported models and incomplete reply measurements have a blank cost.

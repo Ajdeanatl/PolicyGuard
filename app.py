@@ -3,7 +3,7 @@ import os
 from openai import OpenAI, OpenAIError
 import streamlit as st
 
-from audit import CASES, POLICY, load_reviews, run_audit, save_results, summarize
+from audit import CASES, POLICY, chatbot_cost, load_reviews, run_audit, save_results, summarize
 
 st.set_page_config(page_title="PolicyGuard")
 st.title("PolicyGuard")
@@ -23,11 +23,11 @@ selected = st.multiselect(
 trials = st.slider("Trials per case per bot", 1, 3, 2)
 
 if st.button("Run Audit", disabled=not selected):
-    generate = None
+    generate = generate_reply = None
     if live:
         client = OpenAI(api_key=api_key, timeout=20, max_retries=0)
 
-        def generate(instructions, message):
+        def request(instructions, message):
             try:
                 response = client.responses.create(
                     model=model, instructions=instructions, input=message,
@@ -40,12 +40,20 @@ if st.button("Run Audit", disabled=not selected):
                 raise RuntimeError(f"Model response incomplete ({details.reason if details else 'unknown'}).")
             if not response.output_text.strip():
                 raise RuntimeError("Model returned no text.")
-            return response.output_text
+            return response
+
+        def generate(instructions, message):
+            return request(instructions, message).output_text
+
+        def generate_reply(instructions, conversation):
+            response = request(instructions, conversation)
+            return response.output_text, chatbot_cost(model, response.usage)
 
     progress = st.progress(0)
     total = len(selected) * trials * 2
     st.session_state["audit_rows"] = run_audit(
-        selected, trials, generate, lambda completed: progress.progress(completed / total)
+        selected, trials, generate, lambda completed: progress.progress(completed / total),
+        generate_reply=generate_reply,
     )
     st.session_state["audit_live"] = live
     if live:

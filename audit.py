@@ -152,7 +152,16 @@ def grade(generate, case, conversation):
                 check_passed="yes" if quote_ok and (evidence or citation == "none") else "no")
 
 
-def run_audit(cases, trials, generate=None, on_result=None):
+def chatbot_cost(model, usage):
+    """Estimate standard API charges in USD for one GPT-5 mini response."""
+    if model != "gpt-5-mini" or usage is None:
+        return None
+    cached = getattr(usage.input_tokens_details, "cached_tokens", 0) or 0
+    return ((usage.input_tokens - cached) * 0.25 + cached * 0.025
+            + usage.output_tokens * 2.00) / 1_000_000
+
+
+def run_audit(cases, trials, generate=None, on_result=None, *, generate_reply=None):
     rows = []
     audit_id = uuid4().hex
     for case in cases:
@@ -168,6 +177,7 @@ def run_audit(cases, trials, generate=None, on_result=None):
                            policy_evidence="", offending_text="", tone="", confidence="",
                            check_passed="no", api_cost=None, human_decision="",
                            corrected_verdict="", reviewer_note="")
+                reply_costs = []
                 try:
                     fails = bot == "basic" and trial % 2 == 1
                     for message in (case.message, case.follow_up):
@@ -185,8 +195,15 @@ def run_audit(cases, trials, generate=None, on_result=None):
                                     " Use only the supplied policy. Do not invent a website, process,"
                                     " fee or requirement. Never claim to modify a booking or issue a refund."
                                 )
-                            reply = generate(f"{instructions}\n\n{policy}", conversation)
+                            instructions = f"{instructions}\n\n{policy}"
+                            if generate_reply is None:
+                                reply = generate(instructions, conversation)
+                            else:
+                                reply, cost = generate_reply(instructions, conversation)
+                                reply_costs.append(cost)
                         conversation.append(dict(role="assistant", content=reply))
+                    if len(reply_costs) == 2 and all(cost is not None for cost in reply_costs):
+                        row["api_cost"] = round(sum(reply_costs), 10)
                     if generate is None:
                         verdict = "wrong_information" if fails else "correct"
                         row.update(verdict=verdict, severity=SEVERITY[verdict],
