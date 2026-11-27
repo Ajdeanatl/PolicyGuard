@@ -31,7 +31,7 @@ if st.button("Run Audit", disabled=not selected):
             try:
                 response = client.responses.create(
                     model=model, instructions=instructions, input=message,
-                    max_output_tokens=600,
+                    max_output_tokens=4000,
                 )
             except OpenAIError as error:
                 raise RuntimeError(f"Model request failed ({type(error).__name__}).") from error
